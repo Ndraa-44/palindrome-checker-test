@@ -15,10 +15,13 @@ class UserRemoteDataSourceImpl implements UserRemoteDataSource {
   @override
   Future<UserPageModel> getUsers({required int page, required int perPage}) async {
     final uri = Uri.parse('${ApiConstants.baseUrl}/users?page=$page&per_page=$perPage');
-    final response = await client.get(uri, headers: {
-      'x-api-key': ApiConstants.apiKey,
-    });
     
+    final Map<String, String> headers = {};
+    if (ApiConstants.apiKey.isNotEmpty) {
+      headers['x-api-key'] = ApiConstants.apiKey;
+    }
+
+    final response = await client.get(uri, headers: headers);
     if (response.statusCode == 200) {
       return UserPageModel.fromJson(jsonDecode(response.body));
     } else {
