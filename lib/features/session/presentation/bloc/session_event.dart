@@ -18,9 +18,10 @@ class SaveName extends SessionEvent {
 
 class SaveSelectedUser extends SessionEvent {
   final String selectedUserName;
+  final String selectedUserEmail;
 
-  const SaveSelectedUser(this.selectedUserName);
+  const SaveSelectedUser(this.selectedUserName, this.selectedUserEmail);
 
   @override
-  List<Object> get props => [selectedUserName];
+  List<Object> get props => [selectedUserName, selectedUserEmail];
 }

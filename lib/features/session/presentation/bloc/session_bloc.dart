@@ -9,7 +9,10 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
     });
     
     on<SaveSelectedUser>((event, emit) {
-      emit(state.copyWith(selectedUserName: event.selectedUserName));
+      emit(state.copyWith(
+        selectedUserName: event.selectedUserName,
+        selectedUserEmail: event.selectedUserEmail,
+      ));
     });
   }
 }
