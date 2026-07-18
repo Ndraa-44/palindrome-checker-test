@@ -1,244 +1,161 @@
 # System Design Document (SDD)
 ## Aplikasi Mobile – Palindrome Checker & User List (Flutter)
 
-**Versi:** 1.0
-**State Management Rekomendasi:** **Bloc** (paling scalable & testable untuk async API + shared state antar screen). Alternatif: Provider (lebih ringan/simple) atau GetX (lebih cepat ditulis).
-> Dokumen ini pakai contoh dengan **Provider** untuk kesederhanaan penjelasan, tapi arsitektur berlaku sama untuk Bloc/GetX — hanya beda cara "state holder"-nya.
+**Versi:** 1.1
+**Arsitektur:** **Clean Architecture (Feature-Based)**
+**State Management:** **Bloc (flutter_bloc)**
+**Dependency Injection:** **GetIt**
 
 ---
 
-## 1. Arsitektur Umum
+## 1. Arsitektur Umum (Clean Architecture)
 
-Menggunakan pendekatan **layered architecture** sederhana (adaptasi Clean Architecture untuk skala kecil):
+Aplikasi ini mengadopsi pola **Clean Architecture** yang berbasis fitur (Feature-Based) untuk menjaga *Separation of Concerns*, *scalability*, dan *testability*.
 
-```
+```text
 lib/
-├── main.dart
-├── app/
-│   └── app.dart                # MaterialApp, routes, providers root
 ├── core/
-│   ├── constants/               # api_constants.dart (base url, api key)
-│   ├── network/                 # dio_client.dart / http_client.dart
-│   └── utils/                   # palindrome_checker.dart
-├── data/
-│   ├── models/
-│   │   └── user_model.dart
-│   └── repositories/
-│       └── user_repository.dart # fetch users dari API
-├── presentation/
-│   ├── screen1_home/
-│   │   ├── home_screen.dart
-│   │   └── home_provider.dart   # state: name, sentence, dialog result
-│   ├── screen2_welcome/
-│   │   ├── welcome_screen.dart
-│   │   └── welcome_provider.dart # state: name, selectedUserName
-│   └── screen3_userlist/
-│       ├── user_list_screen.dart
-│       └── user_list_provider.dart # state: users, page, isLoading, hasMore, error
-└── shared/
-    └── widgets/                 # loading_indicator.dart, empty_state.dart
+│   ├── constants/               # API keys, base URL
+│   ├── theme/                   # Colors, text styles
+│   └── utils/                   # Palindrome checker logic
+├── features/
+│   ├── session/                 # Feature: Nama User & Selected User (Screen 1 & 2)
+│   │   └── presentation/
+│   │       ├── bloc/            # SessionBloc
+│   │       └── pages/           # HomeScreen, WelcomeScreen
+│   └── users/                   # Feature: Fetch User List (Screen 3)
+│       ├── domain/
+│       │   ├── entities/        # Core business objects
+│       │   ├── repositories/    # Interfaces / contracts
+│       │   └── usecases/        # Business logic (GetUsers)
+│       ├── data/
+│       │   ├── models/          # DTOs (Data Transfer Objects)
+│       │   ├── datasources/     # API calls (RemoteDataSource)
+│       │   └── repositories/    # Implementation dari interfaces domain
+│       └── presentation/
+│           ├── bloc/            # UserListBloc
+│           └── pages/           # UserListScreen
+├── shared/
+│   └── widgets/                 # Loading indicator, empty/error states
+├── injection_container.dart     # GetIt Setup (Dependency Injection)
+├── app/
+│   └── app.dart                 # MaterialApp, Routes, BlocProviders
+└── main.dart                    # Entry point aplikasi
 ```
 
 ---
 
-## 2. State Management & Data Sharing Antar Screen
+## 2. Dependency Injection (DI) dengan GetIt
+
+Aplikasi menggunakan `get_it` sebagai jembatan (*Service Locator*) untuk menyuntikkan *dependencies* di setiap layer Clean Architecture (dari Data -> Domain -> Presentation). Konfigurasi terpusat pada file `injection_container.dart`.
+
+```dart
+// lib/injection_container.dart
+final sl = GetIt.instance;
+
+Future<void> init() async {
+  // 1. Presentation (Blocs)
+  sl.registerFactory(() => SessionBloc());
+  sl.registerFactory(() => UserListBloc(getUsers: sl()));
+
+  // 2. Domain (Use Cases)
+  sl.registerLazySingleton(() => GetUsers(sl()));
+
+  // 3. Data (Repositories & Data Sources)
+  sl.registerLazySingleton<UserRepository>(
+    () => UserRepositoryImpl(remoteDataSource: sl()),
+  );
+  sl.registerLazySingleton<UserRemoteDataSource>(
+    () => UserRemoteDataSourceImpl(client: sl()),
+  );
+
+  // 4. Core / External
+  sl.registerLazySingleton(() => http.Client());
+}
+```
+Setiap *instance* yang dibutuhkan (misal `UserRepository` untuk `GetUsers`) di-*resolve* otomatis oleh `sl()`.
+
+---
+
+## 3. State Management & Data Sharing Antar Screen
 
 Karena requirement mengharuskan:
 - Nama dari **Screen 1** dibawa ke **Screen 2**
 - User terpilih dari **Screen 3** dikirim balik ke **Screen 2** (tanpa membuat screen baru — cukup pop/kembali)
 
-**Desain:** Gunakan **satu shared provider di level atas (app-level)** yang menyimpan state lintas screen, contoh `UserSessionProvider`:
+**Desain:** Menggunakan global **`SessionBloc`** yang di-provide di level `MaterialApp` (`app.dart`) sehingga state-nya persisten selama aplikasi berjalan.
 
 ```dart
-class UserSessionProvider extends ChangeNotifier {
-  String name = '';
-  String selectedUserName = '';
-
-  void setName(String value) {
-    name = value;
-    notifyListeners();
-  }
-
-  void setSelectedUser(String fullName) {
-    selectedUserName = fullName;
-    notifyListeners();
+// session_bloc.dart
+class SessionBloc extends Bloc<SessionEvent, SessionState> {
+  SessionBloc() : super(const SessionState()) {
+    on<UpdateName>((event, emit) => emit(state.copyWith(name: event.name)));
+    on<UpdateSelectedUser>((event, emit) => emit(state.copyWith(selectedUserName: event.userName)));
   }
 }
 ```
 
-Didaftarkan di root `MultiProvider` (`app.dart`) sehingga bisa diakses oleh Screen 1, 2, dan 3 tanpa perlu pass manual lewat constructor / arguments Navigator.
-
-**Alur data:**
-1. Screen 1 → saat "Next" ditekan → `context.read<UserSessionProvider>().setName(nameController.text)` → `Navigator.push(WelcomeScreen)`
-2. Screen 2 → membaca `context.watch<UserSessionProvider>().name` & `.selectedUserName` langsung (reactive, otomatis update).
-3. Screen 3 → saat item di-tap → `context.read<UserSessionProvider>().setSelectedUser(user.fullName)` → `Navigator.pop(context)` (kembali ke Screen 2 yang sudah ada di stack, **bukan push screen baru**).
-
-> Catatan: Ini yang membuat requirement 4.e ("don't create a new screen, just continue the current screen") terpenuhi — Screen 3 di-push di atas Screen 2, lalu saat memilih user, cukup `pop()` kembali ke instance Screen 2 yang sama.
-
-### Alternatif Bloc
-Jika pakai Bloc: buat `UserSessionCubit` dengan method `updateName()` dan `updateSelectedUser()`, di-provide di root via `BlocProvider`, lalu Screen 2 pakai `BlocBuilder<UserSessionCubit, UserSessionState>`.
-
-### Alternatif GetX
-Gunakan `UserSessionController extends GetxController` dengan `RxString name.obs` dan `selectedUserName.obs`, akses dari mana saja via `Get.find<UserSessionController>()`.
+**Alur data lintas screen:**
+1. Screen 1 → saat "Next" ditekan → `context.read<SessionBloc>().add(UpdateName(nameController.text))` → `Navigator.pushNamed(context, '/welcome')`
+2. Screen 2 → menampilkan UI secara reaktif dengan `BlocBuilder<SessionBloc, SessionState>` untuk membaca `state.name` dan `state.selectedUserName`.
+3. Screen 3 → saat item di-tap → `context.read<SessionBloc>().add(UpdateSelectedUser(fullName))` → `Navigator.pop(context)` (kembali ke Screen 2 yang sudah ada di stack, **bukan push screen baru**).
 
 ---
 
-## 3. Desain Modul per Screen
+## 4. Desain Modul per Fitur
 
-### 3.1 Screen 1 – Palindrome Checker
-**Provider:** `HomeProvider` (local state, tidak perlu shared)
+### 4.1 Feature: Session (Screen 1 & 2)
+Mengatur *state* lokal (validasi form/dialog) dan global (Nama & Selected User).
+
+**Screen 1 – Palindrome Checker**
+- Logika pengecekan palindrome berada di layer `core/utils/` agar bisa di-*reuse* atau di-*test* secara terpisah.
+- `isPalindrome(String sentence)` menormalisasi text (lowercase, hapus spasi).
+
+**Screen 2 – Welcome Screen**
+- *Stateless Widget* yang sepenuhnya bergantung pada `BlocBuilder<SessionBloc, SessionState>`.
+
+### 4.2 Feature: Users (Screen 3)
+Diimplementasikan penuh dengan **Clean Architecture**.
+
+**1. Data Layer (`users/data/`)**
+Menangani *fetching* dari API dan konversi JSON ke Model.
 ```dart
-class HomeProvider extends ChangeNotifier {
-  bool checkPalindrome(String sentence) {
-    final normalized = sentence.toLowerCase().replaceAll(' ', '');
-    return normalized == normalized.split('').reversed.join('');
-  }
+class UserRemoteDataSourceImpl implements UserRemoteDataSource {
+  final http.Client client;
+  // Memanggil GET https://reqres.in/api/users
+}
+class UserRepositoryImpl implements UserRepository {
+  final UserRemoteDataSource remoteDataSource;
+  // Memanggil remoteDataSource & me-return data ke domain
 }
 ```
-**Widget tree:** `Scaffold > Column [ TextField(name), TextField(sentence), ElevatedButton(Check), ElevatedButton(Next) ]`
 
-**Dialog:**
+**2. Domain Layer (`users/domain/`)**
+Tempat Entity dan Business Rules (UseCases) bersemayam, tidak bergantung pada framework Flutter (Pure Dart).
 ```dart
-showDialog(
-  context: context,
-  builder: (_) => AlertDialog(
-    content: Text(isPalindrome ? "isPalindrome" : "not palindrome"),
-  ),
-);
-```
-
-### 3.2 Screen 2 – Welcome Screen
-**Consumes:** `UserSessionProvider` (shared, read-only di sini kecuali reset)
-**Widget tree:** `Scaffold > Column [ Text("Welcome"), Text(name), Text(selectedUserName), ElevatedButton("Choose a User") ]`
-
-### 3.3 Screen 3 – User List
-**Provider:** `UserListProvider` (local, khusus screen ini)
-
-```dart
-class UserListProvider extends ChangeNotifier {
-  List<UserModel> users = [];
-  int page = 1;
-  int totalPages = 1;
-  bool isLoading = false;
-  String? error;
-
-  Future<void> fetchUsers({bool refresh = false}) async {
-    if (refresh) { page = 1; users.clear(); }
-    isLoading = true;
-    notifyListeners();
-    try {
-      final result = await UserRepository.getUsers(page: page, perPage: 10);
-      users.addAll(result.data);
-      totalPages = result.totalPages;
-      error = null;
-    } catch (e) {
-      error = e.toString();
-    }
-    isLoading = false;
-    notifyListeners();
-  }
-
-  Future<void> loadNextPage() async {
-    if (page < totalPages && !isLoading) {
-      page++;
-      await fetchUsers();
-    }
+class GetUsers {
+  final UserRepository repository;
+  Future<Either<Failure, UserListResponse>> call(int page, int perPage) {
+    return repository.getUsers(page: page, perPage: perPage);
   }
 }
 ```
 
-**Widget tree:**
-```
-Scaffold
- > RefreshIndicator(onRefresh: () => fetchUsers(refresh: true))
-   > NotificationListener<ScrollNotification> (deteksi scroll bawah -> loadNextPage())
-     > users.isEmpty ? EmptyStateWidget() : ListView.builder(...)
-```
-
-**Item tap:**
+**3. Presentation Layer (`users/presentation/`)**
+State dari Screen 3 diatur oleh **`UserListBloc`**.
 ```dart
-onTap: () {
-  context.read<UserSessionProvider>()
-      .setSelectedUser('${user.firstName} ${user.lastName}');
-  Navigator.pop(context); // kembali ke Screen 2
+class UserListBloc extends Bloc<UserListEvent, UserListState> {
+  // State: users (List), page, isLoading, hasMore, errorMessage
+  
+  // on<FetchUsers> -> Menjalankan GetUsers() untuk halaman pertama
+  // on<LoadMoreUsers> -> Menjalankan GetUsers() untuk halaman berikutnya
 }
 ```
+View di `UserListScreen` menggunakan `RefreshIndicator` dan memonitor *scroll notification* untuk memicu event `LoadMoreUsers` (Infinite Scroll).
 
 ---
 
-## 4. Desain Data Model
-
-```dart
-class UserModel {
-  final int id;
-  final String email;
-  final String firstName;
-  final String lastName;
-  final String avatar;
-
-  UserModel({
-    required this.id,
-    required this.email,
-    required this.firstName,
-    required this.lastName,
-    required this.avatar,
-  });
-
-  factory UserModel.fromJson(Map<String, dynamic> json) => UserModel(
-    id: json['id'],
-    email: json['email'],
-    firstName: json['first_name'],
-    lastName: json['last_name'],
-    avatar: json['avatar'],
-  );
-}
-
-class UserListResponse {
-  final List<UserModel> data;
-  final int page;
-  final int totalPages;
-
-  UserListResponse({required this.data, required this.page, required this.totalPages});
-
-  factory UserListResponse.fromJson(Map<String, dynamic> json) => UserListResponse(
-    data: (json['data'] as List).map((e) => UserModel.fromJson(e)).toList(),
-    page: json['page'],
-    totalPages: json['total_pages'],
-  );
-}
-```
-
----
-
-## 5. Desain API Layer
-
-```dart
-class UserRepository {
-  static const _baseUrl = 'https://reqres.in/api/users';
-  static const _apiKey = String.fromEnvironment('REQRES_API_KEY'); // via --dart-define
-
-  static Future<UserListResponse> getUsers({required int page, required int perPage}) async {
-    final uri = Uri.parse('$_baseUrl?page=$page&per_page=$perPage');
-    final response = await http.get(uri, headers: {
-      'x-api-key': _apiKey,
-    });
-    if (response.statusCode == 200) {
-      return UserListResponse.fromJson(jsonDecode(response.body));
-    } else {
-      throw Exception('Failed to load users: ${response.statusCode}');
-    }
-  }
-}
-```
-
-**Menjalankan dengan API key aman:**
-```
-flutter run --dart-define=REQRES_API_KEY=your_actual_key_here
-```
-
----
-
-## 6. Navigation Design
+## 5. Navigation Design
 
 ```dart
 // app.dart
@@ -258,31 +175,29 @@ HomeScreen --(Next, push)--> WelcomeScreen --(Choose a User, push)--> UserListSc
 
 ---
 
-## 7. Error & Edge Case Handling
+## 6. Error & Edge Case Handling
 
 | Kasus | Penanganan |
 |---|---|
-| API key invalid | Tampilkan pesan error di list + tombol retry |
-| Tidak ada internet | Tampilkan pesan error + retry |
-| Data kosong (empty state) | Ilustrasi/icon + teks "Tidak ada data user" |
-| Sudah di halaman terakhir (totalPages tercapai) | Stop infinite scroll, tidak fetch lagi |
-| Input kosong di Screen 1 | Validasi sebelum proses Check/Next |
+| API key invalid / No internet | State Bloc berubah menjadi `UserListError`, UI menampilkan *Error State* + tombol retry |
+| Data kosong | State Bloc berubah menjadi `UserListEmpty` (atau array kosong), UI menampilkan `EmptyStateWidget` |
+| Sudah di halaman terakhir | Bloc state mendeteksi `hasMore = false`, tidak *trigger* *fetch* API lagi saat di-scroll |
+| Input kosong di Screen 1 | Form validasi (*Snackbar* / Error Text) menahan proses Check/Next |
 
 ---
 
-## 8. Rekomendasi Library
+## 7. Referensi Library Utama (`pubspec.yaml`)
 
-| Kebutuhan | Package |
+| Package | Penggunaan |
 |---|---|
-| HTTP client | `http` atau `dio` |
-| State management | `provider` / `flutter_bloc` / `get` |
-| Pull to refresh | Built-in `RefreshIndicator` |
-| Image caching (avatar) | `cached_network_image` |
-| Env variable / API key | `--dart-define` atau package `flutter_dotenv` |
+| `flutter_bloc` & `equatable` | State management dan value comparison (mengurangi *rebuild* berlebih) |
+| `get_it` | Dependency Injection (*Service Locator*) |
+| `http` | HTTP Client untuk fetching reqres.in |
+| `cached_network_image` | Image caching untuk avatar *user* |
 
 ---
 
-## 9. Testing Strategy (Ringkas)
-- **Unit test**: fungsi `isPalindrome()` dengan 4 test case dari SRS.
-- **Widget test**: dialog muncul sesuai hasil check.
-- **Integration test**: alur navigasi Screen1 → 2 → 3 → kembali ke 2 dengan data terisi benar.
+## 8. Testing Strategy
+- **Unit test**: Test logika *pure function* `isPalindrome()`.
+- **Bloc test**: Mocking `GetUsers` UseCase menggunakan `mocktail` lalu memverifikasi emisi *state* dari `UserListBloc` (contoh: *Loading* → *Loaded*).
+- **Widget test**: Simulasi interaksi form (ketik text) dan tekan tombol untuk memunculkan dialog pada Screen 1.

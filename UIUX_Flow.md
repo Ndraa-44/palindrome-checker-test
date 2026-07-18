@@ -1,7 +1,7 @@
 # UI/UX Flow Document
 ## Aplikasi Mobile – Palindrome Checker & User List
 
-**Versi:** 1.0
+**Versi:** 1.1
 
 ---
 
@@ -19,7 +19,7 @@
    [Dialog: "isPalindrome" / "not palindrome"]
 ```
 
-**Prinsip navigasi penting:** Screen 3 tidak pernah membuka screen baru saat user dipilih — ia langsung **pop kembali ke instance Screen 2** yang sudah ada di navigation stack, dengan state `selectedUserName` sudah ter-update melalui shared provider/state.
+**Prinsip navigasi penting:** Screen 3 tidak pernah membuka screen baru saat user dipilih — ia langsung **pop kembali ke instance Screen 2** yang sudah ada di navigation stack, dengan state `selectedUserName` sudah ter-update secara global melalui **SessionBloc**.
 
 ---
 
@@ -54,7 +54,7 @@
 |---|---|---|
 | Tap "Check" | Jalankan `isPalindrome(sentence)` | Dialog muncul: **"isPalindrome"** (true) atau **"not palindrome"** (false) |
 | Tap "OK" pada dialog | Tutup dialog | Kembali ke Screen 1, input tetap ada |
-| Tap "Next" | Simpan `name` ke shared state | Navigasi ke Screen 2 |
+| Tap "Next" | Simpan `name` ke **SessionBloc** | Navigasi ke Screen 2 |
 | Input kosong + tap Check/Next | Tampilkan validasi error (border merah / snackbar) | Tidak lanjut proses |
 
 ### 2.3 States
@@ -75,7 +75,7 @@
 │                                 │
 │         "Welcome"              │   ← label statis, besar/bold
 │                                 │
-│   Name: {nama dari Screen 1}   │   ← label dinamis
+│   Name: {nama dari Screen 1}   │   ← label dinamis (dari SessionBloc)
 │                                 │
 │   Selected User: {nama user}   │   ← label dinamis, awalnya "-" / "Not selected"
 │                                 │
@@ -88,13 +88,13 @@
 ### 3.2 Interaksi
 | Trigger | Aksi | Hasil Visual |
 |---|---|---|
-| Screen dibuka (dari Screen 1) | Baca `name` dari shared state | Label Name terisi |
+| Screen dibuka (dari Screen 1) | Baca `state.name` via `BlocBuilder` | Label Name terisi |
 | Tap "Choose a User" | Push Screen 3 | Navigasi ke Screen 3 |
-| Kembali dari Screen 3 (setelah pilih user) | Baca `selectedUserName` dari shared state | Label Selected User ter-update otomatis (reactive) |
+| Kembali dari Screen 3 (setelah pilih user) | Bloc State otomatis berubah (reaktif) | Label Selected User ter-update otomatis tanpa me-refresh seluruh halaman secara paksa |
 
 ### 3.3 States
 - **Initial**: Selected User = placeholder ("-" / "Belum dipilih").
-- **After selection**: Selected User terisi nama lengkap user.
+- **After selection**: Selected User terisi nama lengkap user dari Screen 3.
 
 ---
 
@@ -142,30 +142,29 @@
 ### 4.2 Interaksi
 | Trigger | Aksi | Hasil Visual |
 |---|---|---|
-| Screen dibuka | Fetch page 1 | Loading indicator → list tampil |
+| Screen dibuka | `UserListBloc` dispatch event Fetch (Page 1) | Loading indicator → list tampil |
 | Tarik layar ke bawah (pull) | Refresh dari page 1 | List di-reset & reload |
-| Scroll ke bawah list | Fetch page + 1 | Loading spinner kecil di bawah list → item baru ditambahkan |
-| Tap salah satu item user | Simpan nama user ke shared state, `pop()` | Kembali ke Screen 2, label Selected User langsung berubah |
+| Scroll ke bawah list | Dispatch event Load More | Loading spinner kecil di bawah list → item baru ditambahkan |
+| Tap salah satu item user | Dispatch event `UpdateSelectedUser` ke `SessionBloc`, panggil `Navigator.pop(context)` | Kembali ke Screen 2, label Selected User langsung berubah |
 | Data kosong | — | Tampilkan Empty State |
-| Fetch gagal (network/API key error) | — | Tampilkan Error State + tombol retry |
+| Fetch gagal (network/API key error)| — | Tampilkan Error State + tombol retry |
 | Sudah di halaman terakhir | Stop fetch tambahan | Tidak ada spinner tambahan saat scroll |
 
-### 4.3 States
-- **Loading (initial)**
-- **Loaded (with data)**
-- **Loading more (pagination)**
-- **Empty**
-- **Error**
-- **Refreshing**
+### 4.3 States (Bloc Representation)
+- **UserListInitial / Loading** (fetch pertama kali)
+- **UserListLoaded** (menampilkan list)
+- **UserListLoadingMore** (spinner saat pagination)
+- **UserListEmpty** (array kosong)
+- **UserListError** (gagal fetch)
 
 ---
 
 ## 5. Ringkasan Shared State Antar Screen
 
-| Data | Dibuat di | Digunakan di | Diupdate di |
+| Data | Dibuat di | Disimpan di | Diupdate di |
 |---|---|---|---|
-| `name` | Screen 1 (input) | Screen 2 (label) | Screen 1 saat tap "Next" |
-| `selectedUserName` | Screen 3 (tap item) | Screen 2 (label) | Screen 3 saat tap item user |
+| `name` | Screen 1 (input form) | `SessionBloc` | Screen 1 saat tap "Next" |
+| `selectedUserName` | Screen 3 (tap item user) | `SessionBloc` | Screen 3 saat tap item user sebelum pop kembali |
 
 ---
 

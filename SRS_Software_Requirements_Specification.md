@@ -1,8 +1,8 @@
 # Software Requirements Specification (SRS)
 ## Aplikasi Mobile – Palindrome Checker & User List (Flutter)
 
-**Versi Dokumen:** 1.0
-**Platform Target:** Flutter 3.32+ (State Management: Provider / GetX / Bloc)
+**Versi Dokumen:** 1.1
+**Platform Target:** Flutter 3.x (Dart 3.12+) (State Management: Bloc)
 **Tanggal:** 18 Juli 2026
 
 ---
@@ -43,9 +43,11 @@ Aplikasi mobile mandiri (standalone), bukan bagian dari sistem yang lebih besar.
 Pengguna umum yang menggunakan aplikasi mobile — tidak memerlukan pelatihan khusus, UI harus intuitif.
 
 ### 2.3 Batasan (Constraints)
-- Flutter versi **3.32 atau lebih tinggi**.
-- Wajib menggunakan salah satu state management: **Provider, GetX, atau Bloc**.
-- API key reqres.in harus disimpan dengan aman (tidak hardcode di repo publik — gunakan `.env` / `--dart-define`).
+- Menggunakan **Flutter versi 3.x (Dart 3.12+)**.
+- Wajib menggunakan arsitektur **Clean Architecture (Feature-Based)**.
+- Wajib menggunakan state management **Bloc (flutter_bloc)**.
+- Wajib menggunakan **GetIt** untuk Dependency Injection.
+- API key reqres.in harus disimpan dengan aman (menggunakan `--dart-define`).
 - Data yang dibawa antar screen (nama dari Screen 1, user terpilih dari Screen 3) harus tetap ada meski berpindah/kembali antar screen tanpa membuat screen baru (sesuai requirement 4.e).
 
 ### 2.4 Asumsi
@@ -67,8 +69,8 @@ Pengguna umum yang menggunakan aplikasi mobile — tidak memerlukan pelatihan kh
 | F-1.5 | Fungsi palindrome harus **case-insensitive** dan **mengabaikan spasi** (lihat contoh di 3.1.1) |
 | F-1.6 | Sistem menampilkan **dialog** berisi pesan `"isPalindrome"` jika hasil true, atau `"not palindrome"` jika false |
 | F-1.7 | Sistem menyediakan tombol **"Next"** di bawah tombol Check |
-| F-1.8 | Saat tombol Next ditekan, sistem berpindah ke Screen 2 sambil membawa nilai input **Nama** |
-| F-1.9 | Validasi: jika input nama/kalimat kosong saat Check/Next ditekan, tampilkan pesan error yang sesuai (rekomendasi tambahan, tidak eksplisit di soal namun best practice) |
+| F-1.8 | Saat tombol Next ditekan, sistem berpindah ke Screen 2 sambil membawa nilai input **Nama** ke dalam state SessionBloc |
+| F-1.9 | Validasi: jika input nama/kalimat kosong saat Check/Next ditekan, tampilkan pesan error yang sesuai |
 
 #### 3.1.1 Contoh Test Case Palindrome
 ```
@@ -101,7 +103,7 @@ isPalindrome("suitmedia")       -> false
 | F-3.6 | Menampilkan **empty state** (ilustrasi/teks) jika data kosong |
 | F-3.7 | Menampilkan **loading indicator** saat fetch data (initial load & load more) |
 | F-3.8 | Menangani **error state** (misal API key invalid / no internet) dengan pesan yang jelas |
-| F-3.9 | Saat item user di-tap, sistem **kembali ke Screen 2** (bukan membuat screen baru) dan mengisi label **Selected User Name** dengan `first_name + last_name` dari user yang dipilih |
+| F-3.9 | Saat item user di-tap, sistem **kembali ke Screen 2** (bukan membuat screen baru) dan mengisi label **Selected User Name** dengan `first_name + last_name` dari user yang dipilih melalui Bloc |
 
 ---
 
@@ -109,12 +111,12 @@ isPalindrome("suitmedia")       -> false
 
 | Kategori | Kebutuhan |
 |---|---|
-| **Compatibility** | Flutter 3.32+, mendukung Android & iOS |
-| **Performance** | List rendering harus lazy (ListView.builder), image avatar di-cache |
+| **Compatibility** | Flutter 3.x (Dart 3.12+), mendukung Android & iOS |
+| **Performance** | List rendering harus lazy (ListView.builder), image avatar di-cache dengan `cached_network_image` |
 | **Usability** | Dialog & feedback jelas, tombol memiliki state disabled saat proses loading |
-| **Security** | API key tidak boleh di-commit ke version control publik (gunakan `.gitignore` + `--dart-define` atau file `.env` yang di-ignore) |
-| **Maintainability** | Kode terstruktur mengikuti clean architecture / separation of concern (lihat SDD) |
-| **State Persistence** | Data nama & selected user tetap tersimpan selama session aplikasi berjalan (di memory / state management, tidak wajib persist ke disk kecuali diminta) |
+| **Security** | API key tidak boleh di-commit ke version control publik (gunakan `--dart-define`) |
+| **Maintainability** | Kode terstruktur secara ketat mengikuti **Clean Architecture (Feature-Based)** dengan pemisahan Domain, Data, dan Presentation layer. |
+| **State Persistence** | Data nama & selected user tetap tersimpan selama session aplikasi berjalan (menggunakan global `SessionBloc`) |
 
 ---
 
@@ -155,4 +157,4 @@ Headers:
 - [ ] Navigasi Screen 1 → 2 → 3 → kembali ke 2 (bukan screen baru) berjalan mulus.
 - [ ] Pull-to-refresh & infinite scroll berfungsi di Screen 3.
 - [ ] Empty state tampil saat data kosong.
-- [ ] Selected user name di Screen 2 ter-update setelah memilih user.
+- [ ] Selected user name di Screen 2 ter-update setelah memilih user dari Bloc state.
